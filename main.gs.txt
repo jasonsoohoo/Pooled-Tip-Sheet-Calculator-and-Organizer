@@ -1,0 +1,333 @@
+// Upon Employee Submission append to employee array if one doesn't exist create one
+// upon manager submission create am/pm tip arrays
+// upon manager submission calculate tip totals
+// upon manager submission create quick data
+
+//[Total Tips, Kitchen, Remaining Tips, Total Hours, Hourly Rate, [EMPID, ADJ HOURS, TIPS], [EMPID2, ADJ HOURS2, TIPS2], [][].........]
+
+function getActiveEmployees(){
+  var return_arr = [];
+  var sheet = getSheet('Employees');
+  var name_array = sheet.getRange('A:A').getValues().flat().filter(n => n);
+  var active_array = sheet.getRange('B:B').getValues().flat().filter((str) => str !== '');
+  for (let step = 0; step < name_array.length; step++){
+    if(active_array[step] == true){
+      return_arr.push(name_array[step]);
+    }
+  }
+  return return_arr;
+}
+
+function getActiveManagers(){
+  var return_arr = [];
+  var sheet = getSheet('Employees');
+  var name_array = sheet.getRange('A:A').getValues().flat().filter(n => n);
+  var manager_array = sheet.getRange('D:D').getValues().flat().filter((str) => str !== '');
+  for (let step = 0; step < name_array.length; step++){
+    if(manager_array[step] == true){
+      return_arr.push(name_array[step]);
+    }
+  }
+  return return_arr;  
+}
+
+function updateManagerQuestion(form){
+  var question = form.getItems()[0].asListItem();
+  var answer_array = [];
+  var managers = getActiveManagers();
+  for(let step = 0; step < managers.length; step++){
+    answer_array.push(question.createChoice(managers[step]));
+  }
+  question.setChoices(answer_array);
+}
+
+function addActiveEmployeeFields(form){
+  var page = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Manager Submissions');
+  page.deleteColumns(10, 50);
+  page.insertColumns(10, 50);
+  var employees = getActiveEmployees();
+  for(let step = 0; step < employees.length; step++){
+    form.addTextItem().setTitle(employees[step]);
+  }
+}
+
+function removeActiveEmployeeFields(form){
+  var questions = form.getItems();
+  for(let step = questions.length - 1; step > 7; step--){
+    form.deleteItem(step);
+  }
+  //Needs to sleep a few seconds. When deleting too soon after this the system still
+  //thinks for previously deleted form items still exists, blocking column removal.
+  Utilities.sleep(5000);
+}
+
+//Updates an existing form -- The first question is a drop down so a manager can choose their name.
+// Then it removes a bunch of employee single line fields and then repopulates them based upon if they are an active employee or not.
+function updateForm(){
+  var form = FormApp.openById('1VPEAe3T7Qo66bztVWGeDqiosxAjEisr8b5lLkcQPYH0');
+  updateManagerQuestion(form);
+  removeActiveEmployeeFields(form);
+  addActiveEmployeeFields(form);
+}
+
+function onFormSubmit(e){
+  var answers = e.namedValues;
+  Logger.log(answers);
+  for (var property in answers){
+    Logger.log(property);
+  }
+}
+
+function checkValue(){
+}
+
+//Manager Submission Array[EMP_ID, CASH, CREDIT, GRAT, DD, OO, APPROVED]
+function calculateTips(reportRow, isAM){
+  var emp_column = 'B';
+  var man_column = 'D';
+  var tip_column = 'F';
+  if(!isAM){
+    emp_column = 'C';
+    man_column = 'E';
+    tip_column = 'G';
+  }
+  var emp_subm = getArrayFromCell('End Of Day Report', emp_column + reportRow);
+  emp_subm.forEach((item, index, array) =>{
+      array[index] = item.split("x");
+  });
+  emp_subm = emp_subm.flat();
+  emp_subm = adjustHoursByPercentage(emp_subm);
+  var man_subm = getArrayFromCell('End Of Day Report', man_column + reportRow);
+  Logger.log("Manager Submission Array: " + man_subm);
+  man_subm = man_subm.slice(1,6);
+  Logger.log("Manager Submission Array Sliced: " + man_subm);
+  var total_tips = man_subm.reduce((partialSum, a) => partialSum + parseInt(a), 0);
+  Logger.log("Total Tips: " + total_tips);
+  var kitchen_tips = Math.floor(total_tips * 0.1);
+  var remaining = total_tips - kitchen_tips;
+  var total_hours = 0;
+  for (let step = 1; step < emp_subm.length; step += 2){
+    total_hours += emp_subm[step];
+  }
+  var hourly_rate = Math.floor((remaining / total_hours) * 100) / 100;
+  var new_arr = [total_tips, kitchen_tips, remaining, total_hours, hourly_rate];
+  // new_arr.push(emp_subm);
+  // new_arr = [].concat(new_arr, emp_subm);
+  while(emp_subm.length != 0){
+    new_arr.push(emp_subm.shift());
+    var hours = emp_subm.shift();
+    new_arr.push(hours);
+    new_arr.push(Math.round(hours * hourly_rate));
+  }
+  Logger.log(new_arr);
+  writeArrayToCell('End Of Day Report', tip_column + reportRow, new_arr);
+}      
+
+// Data Management Functions
+
+//Manager TIP Form [TIMESTAMP, EMP_ID, DATE, SHIFT, HOURS, CASH, CREDIT, GRAT, DD, OO, APPROVED]
+//Employee TIP Form [TIMESTAMP, EMP_ID, DATE, SHIFT, HOURS]
+// function onFormSubmit(e){
+//   var sheet = getSheet('End Of Day Report');
+//   //Gets EOD report row and creates a new EOD report row if report for given date doesn't exist.
+//   var eodReportRow = getEndOfDayReport(e.values[2]);
+//   if(eodReportRow === null){
+//     sheet.appendRow([e.values[2]]);
+//     eodReportRow = getFirstEmptyRow(0, 'A', 'End Of Day Report') - 1;
+//   }
+//   //Checks if the submission belongs to a manager or employee.
+//   if(e.values.length == 11.0){
+//     setManagerSubmission(e, eodReportRow);
+//     addEmployeeSubmission([].concat(e.values[1], e.values.slice(3, 5)), eodReportRow);
+//     calculateTips(eodReportRow, e.values[3] === 'AM');
+//   } else {
+//     addEmployeeSubmission([].concat(e.values[1], e.values.slice(3,5)), eodReportRow);
+//   }
+// }
+
+// Attempts to find an existing End Of Day Report for the given date and return it.
+// If a report hasn't been created, the function will create one, append it to the list
+// and return the row of the new report.
+function getEndOfDayReport(date){
+  var sheet = getSheet('End of Day Report');
+  var data = sheet.getRange('A:A').getValues();
+  var ct = 0;
+  while(data[ct][0] != "" && data[ct][0]){
+    Logger.log(data[ct][0]);
+    if(data[ct][0].constructor === Date){
+      if(data[ct][0].toLocaleDateString("en-US") === date){
+        Logger.log("Date Found on row: " + (ct+1));
+        return ct+1;
+      }
+    }
+    ct++;
+  }
+  Logger.log("Date not found.");
+  return null;
+}
+
+// [empid1, hours1, empid2, hours2, empid3, hours3]
+// the iteration portion of this function can probably be made into a standalone so it can work for both adjusting hours and for name retrieval
+function adjustHoursByPercentage(emp_array){
+  var new_arr = [];
+  var sheet = getSheet('Employees');
+  var id_array = sheet.getRange('D:D').getValues().flat().filter(n => n);
+  var per_array = sheet.getRange('C:C').getValues().flat().filter(n => n);
+  for (let step = 0; step < id_array.length; step += 2){
+    var emp_index = id_array.findIndex((x) => x === Number(emp_array[step]));
+    new_arr.push(emp_array[step], Number(per_array[emp_index]) * Number(emp_array[step + 1]));
+  }
+  return new_arr.slice(0, emp_array.length);
+}
+
+//Navigates to Employees tab and retrieves employees that are still active. Creates an array like this [Name 1, Name 2, Name 3...]
+
+
+//Manager Submission Array[EMP_ID, CASH, CREDIT, GRAT, DD, OO, APPROVED]
+//Will Pass whole event array to function slice later
+function setManagerSubmission(e, reportRow){
+  if(e.values[3] === 'AM'){
+    if(getCellValue('End Of Day Report', 'D' + reportRow) === ''){
+      writeArrayToCell('End Of Day Report', 'D' + reportRow, [e.values[1], e.values.slice(5, 11)]);
+    }
+  } else {
+    if(getCellValue('End Of Day Report', 'E' + reportRow) === ''){
+      writeArrayToCell('End Of Day Report', 'E' + reportRow, [e.values[1], e.values.slice(5, 11)]);
+    }
+  }
+
+}
+
+// Input [EMPID, SHIFT, HOURS]
+// Will receive an already sliced array
+function addEmployeeSubmission(array, reportRow){
+  Logger.log(array);
+  if(array[1] === 'AM'){
+    var data = getArrayFromCell('End Of Day Report', 'B' + reportRow);
+    if(data === ''){
+      writeArrayToCell('End Of Day Report', 'B' + reportRow, [array[0] + 'x' + array[2]])
+    } else {
+      writeArrayToCell('End Of Day Report', 'B' + reportRow, [data, [array[0] + 'x' + array[2]]])
+    }
+  } else {
+    var data = getArrayFromCell('End Of Day Report', 'C' + reportRow);
+    if(data === ''){
+      writeArrayToCell('End Of Day Report', 'C' + reportRow, [array[0] + 'x' + array[2]])
+    } else {
+      writeArrayToCell('End Of Day Report', 'C' + reportRow, [data, [array[0] + 'x' + array[2]]])
+    }
+  }
+
+}
+
+//Basic Functions -----------------------------------------------------------------------------------------
+
+function getSheet(name){
+  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
+}
+
+function writeArrayToCell(sheet, cell, data){
+  writeToCell(sheet, cell, data.toString());
+}
+
+function writeToCell(sheet, cell, data){
+  var ss = getSheet(sheet);
+  ss.getRange(cell).setValue(data);
+}
+
+function getCellValue(sheet, cell){
+  var ss = getSheet(sheet);
+  var returnData = null;
+  try {
+    returnData = ss.getRange(cell).getValue();
+  } catch {
+    // Browser.msgBox("[getCellValue] Error - Couldn't find data at cell address " + cell + " sheet " + sheet);
+    returnData = null;
+  }
+  return returnData;
+}
+
+function getArrayFromCell(sheet, cell){
+  var array = getCellValue(sheet, cell);
+  if(array != ''){
+    try{
+      return array.split(",");
+    } catch {
+      Browser.msgBox("Error [getArrayFromCell] could not split. See log for details. Tip data may be wrong.");
+      Logger.log("Err: Data at " + cell + " on " + sheet + " might not be an array. Cannot split.");
+    }
+  }
+  return array;
+}
+
+
+//On-Open Functions
+
+function onOpen() {
+  createSakeMenu();
+  selectCurrentPayPeriodDefault();
+}
+
+//Make sure to call the update values functions once written.
+function selectCurrentPayPeriodDefault(){
+  var ss = getSheet('Home Page');
+  var currentPayPeriod = getCellValue('B4');
+  ss.getRange('B6').setValue(currentPayPeriod);
+}
+
+function createSakeMenu() {
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu('Sake Sushi')
+    .addSeparator()
+    .addSubMenu(ui.createMenu('Employees')
+      .addItem('Create new employee', 'createNewEmployee'))
+    .addSubMenu(ui.createMenu('Testing Functions')
+      .addItem('Find Next Empty Row', 'manuallyTestGetFirstEmptyRow')
+      .addItem('What is the Current Pay Period?', 'selectCurrentPayPeriodDefault')
+      .addItem('writeArray', 'writeArray'))
+    .addToUi();
+}
+
+// Employee Creation and Modification
+
+function createNewEmployee() {
+  var ui = SpreadsheetApp.getUi();
+  var name = ui.prompt('Enter employee name:').getResponseText();
+  var percentage = ui.prompt('Enter percentage as a decimal (50% is 0.5):').getResponseText();
+  var row = [name, 'TRUE', percentage];
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  SpreadsheetApp.setActiveSheet(spreadsheet.getSheetByName('Employees'));
+  SpreadsheetApp.getActiveSheet().appendRow(row);
+}
+
+//This function doesn't account for merged cells. Merged cells show up as null and will trigger this.
+function getFirstEmptyRow(startRow, columnLetter, sheetName) {
+  columnLetter = columnLetter || 'A';
+  var rangeString = columnLetter + ':' + columnLetter;
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  var column = sheet.getRange(rangeString);
+  var values = column.getValues();
+  var ct = startRow;
+  while ( values[ct][0] && values[ct][0] != "") {
+    ct++;
+  }
+  return (ct+1);
+}
+
+//Date Handling
+function toJSDate(gsDate){
+  return new Date(Date.parse(gsDate));
+}
+
+function toGSDate(jsDate){
+  return new Date(jsDate);
+}
+
+//Testing Functions
+function manuallyTestGetFirstEmptyRow() {
+  var ui = SpreadsheetApp.getUi();
+  var sheetName = ui.prompt('Sheet Name:').getResponseText();
+  var columnLetter = ui.prompt('Column Letter:').getResponseText();
+  var startRow = ui.prompt('Starting Row:').getResponseText();
+  getFirstEmptyRow(startRow, columnLetter, sheetName);
+}
